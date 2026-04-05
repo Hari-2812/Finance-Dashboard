@@ -22,6 +22,14 @@ function fixTypeText(typeValue) {
   return 'Expense'
 }
 
+function normalizeList(items) {
+  return items.map((item) => ({
+    ...item,
+    amount: Number(item.amount),
+    type: fixTypeText(item.type),
+  }))
+}
+
 function App() {
   const [listData, setListData] = useState([])
   const [role, setRole] = useState(localStorage.getItem('role') || 'Admin')
@@ -48,18 +56,14 @@ function App() {
         const res = await fetch(API_URL)
         if (!res.ok) throw new Error('API error')
         const data = await res.json()
-        const safeData = data.map((item) => ({
-          ...item,
-          type: fixTypeText(item.type),
-        }))
-        setListData(safeData)
+        setListData(normalizeList(data))
       } catch (error) {
         const localBackup = localStorage.getItem('transactions_backup')
         if (localBackup) {
-          setListData(JSON.parse(localBackup))
+          setListData(normalizeList(JSON.parse(localBackup)))
           setErrorMsg('Backend not reachable. Showing LocalStorage backup.')
         } else {
-          setListData(startTransactions)
+          setListData(normalizeList(startTransactions))
           setErrorMsg('Backend not reachable. Showing backup data from file.')
         }
       } finally {
@@ -163,22 +167,58 @@ function App() {
   }, [pieData])
 
   const monthlyCompare = useMemo(() => {
-    const now = new Date()
-    const m = now.getMonth()
-    const y = now.getFullYear()
+    if (!listData.length) {
+      return {
+        currentMonthIncome: 0,
+        currentMonthExpense: 0,
+        lastMonthIncome: 0,
+        lastMonthExpense: 0,
+        currentLabel: 'N/A',
+        lastLabel: 'N/A',
+      }
+    }
 
-    let monthIncome = 0
-    let monthExpense = 0
+    // student style: pick latest month from data
+    const sorted = [...listData].sort((a, b) => new Date(b.date) - new Date(a.date))
+    const latest = new Date(sorted[0].date)
+    const currentMonth = latest.getMonth()
+    const currentYear = latest.getFullYear()
+
+    const prevMonthDate = new Date(currentYear, currentMonth - 1, 1)
+    const prevMonth = prevMonthDate.getMonth()
+    const prevYear = prevMonthDate.getFullYear()
+
+    let currentMonthIncome = 0
+    let currentMonthExpense = 0
+    let lastMonthIncome = 0
+    let lastMonthExpense = 0
 
     listData.forEach((item) => {
       const d = new Date(item.date)
-      if (d.getMonth() === m && d.getFullYear() === y) {
-        if (item.type === 'Income') monthIncome += Number(item.amount)
-        if (item.type === 'Expense') monthExpense += Number(item.amount)
+      const month = d.getMonth()
+      const year = d.getFullYear()
+
+      if (month === currentMonth && year === currentYear) {
+        if (item.type === 'Income') currentMonthIncome += item.amount
+        if (item.type === 'Expense') currentMonthExpense += item.amount
+      }
+
+      if (month === prevMonth && year === prevYear) {
+        if (item.type === 'Income') lastMonthIncome += item.amount
+        if (item.type === 'Expense') lastMonthExpense += item.amount
       }
     })
 
-    return { monthIncome, monthExpense }
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+    return {
+      currentMonthIncome,
+      currentMonthExpense,
+      lastMonthIncome,
+      lastMonthExpense,
+      currentLabel: `${monthNames[currentMonth]} ${currentYear}`,
+      lastLabel: `${monthNames[prevMonth]} ${prevYear}`,
+    }
   }, [listData])
 
   async function submitForm(e) {
@@ -205,8 +245,9 @@ function App() {
         })
         if (!res.ok) throw new Error('Cannot update')
         const updated = await res.json()
+        const safeUpdated = normalizeList([updated])[0]
         setListData((prev) =>
-          prev.map((item) => (item.id === editId ? { ...updated, type: fixTypeText(updated.type) } : item)),
+          prev.map((item) => (item.id === editId ? safeUpdated : item)),
         )
       } else {
         const res = await fetch(API_URL, {
@@ -216,7 +257,7 @@ function App() {
         })
         if (!res.ok) throw new Error('Cannot add')
         const created = await res.json()
-        setListData((prev) => [{ ...created, type: fixTypeText(created.type) }, ...prev])
+        setListData((prev) => [...normalizeList([created]), ...prev])
       }
 
       setEditId(null)
@@ -291,6 +332,10 @@ function App() {
             <div className="mb-3 bg-amber-50 border border-amber-300 text-amber-700 text-sm rounded-lg p-2">{errorMsg}</div>
           )}
 
+          {listData.length === 0 && !isLoading && (
+            <div className="mb-4 text-sm bg-white border border-gray-200 rounded-xl p-3">No data available</div>
+          )}
+
           <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
             <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm hover:-translate-y-0.5 transition">
               <p className="text-sm text-gray-500">Total Balance</p>
@@ -351,8 +396,12 @@ function App() {
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <p className="text-sm text-gray-500">Monthly income vs expense</p>
-              <p className="font-semibold mt-1 text-green-600">Income: ${monthlyCompare.monthIncome}</p>
-              <p className="font-semibold text-red-500">Expense: ${monthlyCompare.monthExpense}</p>
+              <p className="text-xs text-gray-500 mt-1">{monthlyCompare.currentLabel}</p>
+              <p className="font-semibold text-green-600">Income: ${monthlyCompare.currentMonthIncome}</p>
+              <p className="font-semibold text-red-500">Expense: ${monthlyCompare.currentMonthExpense}</p>
+              <p className="text-xs text-gray-500 mt-2">{monthlyCompare.lastLabel}</p>
+              <p className="font-semibold text-green-600">Income: ${monthlyCompare.lastMonthIncome}</p>
+              <p className="font-semibold text-red-500">Expense: ${monthlyCompare.lastMonthExpense}</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <p className="text-sm text-gray-500">Total savings</p>
