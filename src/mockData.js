@@ -1,0 +1,10 @@
+export const startTransactions = [
+  { id: 1, date: '2026-03-01', amount: 3200, category: 'Salary', type: 'Income' },
+  { id: 2, date: '2026-03-03', amount: 120, category: 'Food', type: 'Expense' },
+  { id: 3, date: '2026-03-05', amount: 60, category: 'Travel', type: 'Expense' },
+  { id: 4, date: '2026-03-09', amount: 200, category: 'Freelance', type: 'Income' },
+  { id: 5, date: '2026-03-11', amount: 400, category: 'Rent', type: 'Expense' },
+  { id: 6, date: '2026-03-13', amount: 80, category: 'Shopping', type: 'Expense' },
+  { id: 7, date: '2026-03-16', amount: 500, category: 'Bonus', type: 'Income' },
+  { id: 8, date: '2026-03-18', amount: 90, category: 'Food', type: 'Expense' },
+]
