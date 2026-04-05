@@ -15,44 +15,83 @@ import {
 import { startTransactions } from './mockData'
 
 const pieColors = ['#EF4444', '#FB7185', '#F59E0B', '#6366F1', '#14B8A6', '#A855F7']
+const API_URL = 'http://localhost:5000/transactions'
 
 function App() {
-  // student style state handling
-  const [transactions, setTransactions] = useState(startTransactions)
+  const [transactions, setTransactions] = useState([])
   const [filterType, setFilterType] = useState('All')
   const [searchText, setSearchText] = useState('')
-  const [role, setRole] = useState('Admin')
+  const [role, setRole] = useState(localStorage.getItem('role') || 'Admin')
+  const [sortBy, setSortBy] = useState('newest')
 
   const [formDate, setFormDate] = useState('')
   const [formAmount, setFormAmount] = useState('')
   const [formCategory, setFormCategory] = useState('')
   const [formType, setFormType] = useState('Expense')
 
-  const [income, setIncome] = useState(0)
-  const [expense, setExpense] = useState(0)
+  const [editingId, setEditingId] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [errorText, setErrorText] = useState('')
+
+  // load from backend API
+  useEffect(() => {
+    async function loadTransactions() {
+      setLoading(true)
+      setErrorText('')
+
+      try {
+        const res = await fetch(API_URL)
+        if (!res.ok) {
+          throw new Error('Failed to load data from API')
+        }
+
+        const data = await res.json()
+        setTransactions(data)
+      } catch (error) {
+        const localData = localStorage.getItem('transactions_backup')
+
+        if (localData) {
+          setTransactions(JSON.parse(localData))
+          setErrorText('API not reachable, loaded local backup data.')
+        } else {
+          setTransactions(startTransactions)
+          setErrorText('API not reachable, loaded default mock data.')
+        }
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadTransactions()
+  }, [])
 
   useEffect(() => {
-    let tempIncome = 0
-    let tempExpense = 0
-
-    transactions.forEach((item) => {
-      if (item.type === 'Income') {
-        tempIncome += Number(item.amount)
-      } else {
-        tempExpense += Number(item.amount)
-      }
-    })
-
-    setIncome(tempIncome)
-    setExpense(tempExpense)
+    localStorage.setItem('transactions_backup', JSON.stringify(transactions))
   }, [transactions])
 
-  const totalBalance = income - expense
+  useEffect(() => {
+    localStorage.setItem('role', role)
+  }, [role])
+
+  const totalIncome = useMemo(() => {
+    return transactions
+      .filter((item) => item.type === 'Income')
+      .reduce((sum, item) => sum + Number(item.amount), 0)
+  }, [transactions])
+
+  const totalExpense = useMemo(() => {
+    return transactions
+      .filter((item) => item.type === 'Expense')
+      .reduce((sum, item) => sum + Number(item.amount), 0)
+  }, [transactions])
+
+  const totalBalance = totalIncome - totalExpense
 
   const filteredTransactions = useMemo(() => {
-    return transactions.filter((item) => {
-      const typeMatch = filterType === 'All' ? true : item.type === filterType
+    let list = [...transactions]
 
+    list = list.filter((item) => {
+      const typeMatch = filterType === 'All' ? true : item.type === filterType
       const searchLower = searchText.toLowerCase()
       const searchMatch =
         item.category.toLowerCase().includes(searchLower) ||
@@ -61,34 +100,42 @@ function App() {
 
       return typeMatch && searchMatch
     })
-  }, [transactions, filterType, searchText])
+
+    if (sortBy === 'newest') {
+      list.sort((a, b) => new Date(b.date) - new Date(a.date))
+    }
+    if (sortBy === 'oldest') {
+      list.sort((a, b) => new Date(a.date) - new Date(b.date))
+    }
+    if (sortBy === 'amountHigh') {
+      list.sort((a, b) => Number(b.amount) - Number(a.amount))
+    }
+    if (sortBy === 'amountLow') {
+      list.sort((a, b) => Number(a.amount) - Number(b.amount))
+    }
+
+    return list
+  }, [transactions, filterType, searchText, sortBy])
 
   const lineData = useMemo(() => {
-    // simple chart data by date
-    return transactions.map((item) => {
-      return {
-        date: item.date.slice(5),
-        amount: Number(item.amount),
-        type: item.type,
-      }
-    })
+    return [...transactions]
+      .sort((a, b) => new Date(a.date) - new Date(b.date))
+      .map((item) => ({ date: item.date.slice(5), amount: Number(item.amount) }))
   }, [transactions])
 
   const pieData = useMemo(() => {
-    const expenseOnly = transactions.filter((item) => item.type === 'Expense')
     const mapObj = {}
 
-    expenseOnly.forEach((item) => {
-      if (!mapObj[item.category]) {
-        mapObj[item.category] = 0
-      }
-      mapObj[item.category] += Number(item.amount)
-    })
+    transactions
+      .filter((item) => item.type === 'Expense')
+      .forEach((item) => {
+        if (!mapObj[item.category]) {
+          mapObj[item.category] = 0
+        }
+        mapObj[item.category] += Number(item.amount)
+      })
 
-    return Object.keys(mapObj).map((key) => ({
-      name: key,
-      value: mapObj[key],
-    }))
+    return Object.keys(mapObj).map((key) => ({ name: key, value: mapObj[key] }))
   }, [transactions])
 
   const highestExpenseCategory = useMemo(() => {
@@ -96,15 +143,43 @@ function App() {
 
     let maxObj = pieData[0]
     pieData.forEach((item) => {
-      if (item.value > maxObj.value) {
-        maxObj = item
-      }
+      if (item.value > maxObj.value) maxObj = item
     })
 
     return `${maxObj.name} ($${maxObj.value})`
   }, [pieData])
 
-  const addTransaction = (e) => {
+  const monthlyCompareText = useMemo(() => {
+    const now = new Date()
+    const thisMonth = now.getMonth() + 1
+    const thisYear = now.getFullYear()
+
+    const prevDate = new Date(thisYear, thisMonth - 2, 1)
+    const prevMonth = prevDate.getMonth() + 1
+    const prevYear = prevDate.getFullYear()
+
+    let thisMonthExpense = 0
+    let prevMonthExpense = 0
+
+    transactions.forEach((item) => {
+      if (item.type !== 'Expense') return
+
+      const d = new Date(item.date)
+      const month = d.getMonth() + 1
+      const year = d.getFullYear()
+
+      if (month === thisMonth && year === thisYear) {
+        thisMonthExpense += Number(item.amount)
+      }
+      if (month === prevMonth && year === prevYear) {
+        prevMonthExpense += Number(item.amount)
+      }
+    })
+
+    return `This month: $${thisMonthExpense} | Last month: $${prevMonthExpense}`
+  }, [transactions])
+
+  async function handleSaveTransaction(e) {
     e.preventDefault()
 
     if (!formDate || !formAmount || !formCategory) {
@@ -112,21 +187,63 @@ function App() {
       return
     }
 
-    const newItem = {
-      id: Date.now(),
+    const payload = {
       date: formDate,
       amount: Number(formAmount),
       category: formCategory,
       type: formType,
     }
 
-    setTransactions([newItem, ...transactions])
+    try {
+      if (editingId) {
+        const res = await fetch(`${API_URL}/${editingId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) throw new Error('Update failed')
+        const updated = await res.json()
+        setTransactions((prev) => prev.map((item) => (item.id === editingId ? updated : item)))
+      } else {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) throw new Error('Create failed')
+        const created = await res.json()
+        setTransactions((prev) => [created, ...prev])
+      }
 
-    // reset form simple way
-    setFormDate('')
-    setFormAmount('')
-    setFormCategory('')
-    setFormType('Expense')
+      setEditingId(null)
+      setFormDate('')
+      setFormAmount('')
+      setFormCategory('')
+      setFormType('Expense')
+    } catch (error) {
+      alert('Could not save transaction. Is backend running?')
+    }
+  }
+
+  function startEdit(item) {
+    setEditingId(item.id)
+    setFormDate(item.date)
+    setFormAmount(String(item.amount))
+    setFormCategory(item.category)
+    setFormType(item.type)
+  }
+
+  async function deleteTransaction(id) {
+    const ok = window.confirm('Delete this transaction?')
+    if (!ok) return
+
+    try {
+      const res = await fetch(`${API_URL}/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Delete failed')
+      setTransactions((prev) => prev.filter((item) => item.id !== id))
+    } catch (error) {
+      alert('Could not delete. Is backend running?')
+    }
   }
 
   return (
@@ -147,18 +264,20 @@ function App() {
           <span className="ml-3 text-xs text-gray-500">Current: {role}</span>
         </div>
 
+        {errorText && <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 p-2 mb-3 rounded">{errorText}</p>}
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-white p-4 rounded border hover:shadow-sm">
+          <div className="bg-white p-4 rounded border hover:shadow-sm transition">
             <p className="text-gray-500 text-sm">Total Balance</p>
             <p className="text-xl font-semibold mt-1">${totalBalance}</p>
           </div>
-          <div className="bg-white p-4 rounded border hover:shadow-sm">
+          <div className="bg-white p-4 rounded border hover:shadow-sm transition">
             <p className="text-gray-500 text-sm">Income</p>
-            <p className="text-xl font-semibold mt-1 text-green-600">${income}</p>
+            <p className="text-xl font-semibold mt-1 text-green-600">${totalIncome}</p>
           </div>
-          <div className="bg-white p-4 rounded border hover:shadow-sm">
+          <div className="bg-white p-4 rounded border hover:shadow-sm transition">
             <p className="text-gray-500 text-sm">Expenses</p>
-            <p className="text-xl font-semibold mt-1 text-red-500">${expense}</p>
+            <p className="text-xl font-semibold mt-1 text-red-500">${totalExpense}</p>
           </div>
         </div>
 
@@ -202,10 +321,14 @@ function App() {
 
         <div className="bg-white p-4 rounded border mb-6">
           <h2 className="font-semibold mb-3">Insights</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="bg-gray-50 p-3 rounded border">
               <p className="text-sm text-gray-500">Highest Expense Category</p>
               <p className="font-medium mt-1">{highestExpenseCategory}</p>
+            </div>
+            <div className="bg-gray-50 p-3 rounded border">
+              <p className="text-sm text-gray-500">Monthly Comparison</p>
+              <p className="font-medium mt-1">{monthlyCompareText}</p>
             </div>
             <div className="bg-gray-50 p-3 rounded border">
               <p className="text-sm text-gray-500">Total Savings</p>
@@ -216,8 +339,8 @@ function App() {
 
         {role === 'Admin' && (
           <div className="bg-white p-4 rounded border mb-6">
-            <h2 className="font-semibold mb-3">Add Transaction (Admin Only)</h2>
-            <form onSubmit={addTransaction} className="grid grid-cols-1 md:grid-cols-5 gap-2">
+            <h2 className="font-semibold mb-3">{editingId ? 'Edit Transaction' : 'Add Transaction'} (Admin Only)</h2>
+            <form onSubmit={handleSaveTransaction} className="grid grid-cols-1 md:grid-cols-5 gap-2">
               <input
                 type="date"
                 value={formDate}
@@ -248,9 +371,9 @@ function App() {
               </select>
               <button
                 type="submit"
-                className="bg-indigo-500 hover:bg-indigo-600 text-white rounded px-3 py-2 text-sm"
+                className="bg-indigo-500 hover:bg-indigo-600 text-white rounded px-3 py-2 text-sm transition"
               >
-                Add
+                {editingId ? 'Update' : 'Add'}
               </button>
             </form>
           </div>
@@ -277,9 +400,22 @@ function App() {
               <option>Income</option>
               <option>Expense</option>
             </select>
+
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="border rounded px-3 py-2 text-sm w-full md:w-52"
+            >
+              <option value="newest">Sort: Newest Date</option>
+              <option value="oldest">Sort: Oldest Date</option>
+              <option value="amountHigh">Sort: Amount High to Low</option>
+              <option value="amountLow">Sort: Amount Low to High</option>
+            </select>
           </div>
 
-          {filteredTransactions.length === 0 ? (
+          {loading ? (
+            <p className="text-gray-500 text-sm">Loading transactions...</p>
+          ) : filteredTransactions.length === 0 ? (
             <p className="text-gray-500 text-sm">No transactions found.</p>
           ) : (
             <div className="overflow-x-auto">
@@ -290,11 +426,12 @@ function App() {
                     <th className="p-2 border">Amount</th>
                     <th className="p-2 border">Category</th>
                     <th className="p-2 border">Type</th>
+                    {role === 'Admin' && <th className="p-2 border">Action</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {filteredTransactions.map((item) => (
-                    <tr key={item.id} className="hover:bg-gray-50 text-sm">
+                    <tr key={item.id} className="hover:bg-gray-50 text-sm transition">
                       <td className="p-2 border">{item.date}</td>
                       <td className="p-2 border">${item.amount}</td>
                       <td className="p-2 border">{item.category}</td>
@@ -307,6 +444,24 @@ function App() {
                           {item.type}
                         </span>
                       </td>
+                      {role === 'Admin' && (
+                        <td className="p-2 border">
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => startEdit(item)}
+                              className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-700 hover:bg-blue-200"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => deleteTransaction(item.id)}
+                              className="px-2 py-1 text-xs rounded bg-red-100 text-red-700 hover:bg-red-200"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
