@@ -17,6 +17,11 @@ import { startTransactions } from './mockData'
 const pieColors = ['#4F46E5', '#6366F1', '#14B8A6', '#F59E0B', '#EC4899', '#8B5CF6', '#EF4444']
 const API_URL = 'http://localhost:5000/transactions'
 
+function fixTypeText(typeValue) {
+  if (String(typeValue).toLowerCase() === 'income') return 'Income'
+  return 'Expense'
+}
+
 function App() {
   const [listData, setListData] = useState([])
   const [role, setRole] = useState(localStorage.getItem('role') || 'Admin')
@@ -43,7 +48,11 @@ function App() {
         const res = await fetch(API_URL)
         if (!res.ok) throw new Error('API error')
         const data = await res.json()
-        setListData(data)
+        const safeData = data.map((item) => ({
+          ...item,
+          type: fixTypeText(item.type),
+        }))
+        setListData(safeData)
       } catch (error) {
         const localBackup = localStorage.getItem('transactions_backup')
         if (localBackup) {
@@ -67,6 +76,17 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem('role', role)
+  }, [role])
+
+  // if switched to viewer, clear form/edit states
+  useEffect(() => {
+    if (role === 'Viewer') {
+      setEditId(null)
+      setFormDate('')
+      setFormAmount('')
+      setFormCategory('Food')
+      setFormType('Expense')
+    }
   }, [role])
 
   const totals = useMemo(() => {
@@ -173,7 +193,7 @@ function App() {
       date: formDate,
       amount: Number(formAmount),
       category: formCategory,
-      type: formType,
+      type: fixTypeText(formType),
     }
 
     try {
@@ -185,7 +205,9 @@ function App() {
         })
         if (!res.ok) throw new Error('Cannot update')
         const updated = await res.json()
-        setListData((prev) => prev.map((item) => (item.id === editId ? updated : item)))
+        setListData((prev) =>
+          prev.map((item) => (item.id === editId ? { ...updated, type: fixTypeText(updated.type) } : item)),
+        )
       } else {
         const res = await fetch(API_URL, {
           method: 'POST',
@@ -194,7 +216,7 @@ function App() {
         })
         if (!res.ok) throw new Error('Cannot add')
         const created = await res.json()
-        setListData((prev) => [created, ...prev])
+        setListData((prev) => [{ ...created, type: fixTypeText(created.type) }, ...prev])
       }
 
       setEditId(null)

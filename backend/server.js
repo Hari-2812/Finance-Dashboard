@@ -61,6 +61,9 @@ app.put('/transactions/:id', async (req, res) => {
   try {
     const id = Number(req.params.id)
     const { date, amount, category, type } = req.body
+    if (!date || !amount || !category || !type) {
+      return res.status(400).json({ message: 'Please send all fields' })
+    }
     const items = await readTransactions()
 
     const index = items.findIndex((item) => item.id === id)
@@ -87,6 +90,10 @@ app.delete('/transactions/:id', async (req, res) => {
   try {
     const id = Number(req.params.id)
     const items = await readTransactions()
+    const exists = items.some((item) => item.id === id)
+    if (!exists) {
+      return res.status(404).json({ message: 'Transaction not found' })
+    }
 
     const nextItems = items.filter((item) => item.id !== id)
     await saveTransactions(nextItems)
