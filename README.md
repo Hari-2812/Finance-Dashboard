@@ -1,6 +1,6 @@
 # Finance Dashboard (Beginner Project)
 
-This is a beginner-friendly finance dashboard project.
+This is a beginner-friendly finance dashboard project with a cleaner fintech-style UI redesign.
 It has a React frontend and a simple Node.js + Express backend.
 The app helps track income and expense transactions.
 
@@ -109,3 +109,4 @@ Backend runs on `http://localhost:5000`.
 
 - This project is intentionally simple and beginner style.
 - JSON file is used instead of database to keep learning easy.
+- Sample transactions were refreshed with more realistic recent values and categories.

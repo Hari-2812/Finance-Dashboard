@@ -14,172 +14,154 @@ import {
 } from 'recharts'
 import { startTransactions } from './mockData'
 
-const pieColors = ['#EF4444', '#FB7185', '#F59E0B', '#6366F1', '#14B8A6', '#A855F7']
+const pieColors = ['#4F46E5', '#6366F1', '#14B8A6', '#F59E0B', '#EC4899', '#8B5CF6', '#EF4444']
 const API_URL = 'http://localhost:5000/transactions'
 
 function App() {
-  const [transactions, setTransactions] = useState([])
-  const [filterType, setFilterType] = useState('All')
-  const [searchText, setSearchText] = useState('')
+  const [listData, setListData] = useState([])
   const [role, setRole] = useState(localStorage.getItem('role') || 'Admin')
+  const [searchText, setSearchText] = useState('')
+  const [filterType, setFilterType] = useState('All')
   const [sortBy, setSortBy] = useState('newest')
 
   const [formDate, setFormDate] = useState('')
   const [formAmount, setFormAmount] = useState('')
-  const [formCategory, setFormCategory] = useState('')
+  const [formCategory, setFormCategory] = useState('Food')
   const [formType, setFormType] = useState('Expense')
+  const [editId, setEditId] = useState(null)
 
-  const [editingId, setEditingId] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [errorText, setErrorText] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [errorMsg, setErrorMsg] = useState('')
 
-  // load from backend API
+  // load data from backend
   useEffect(() => {
-    async function loadTransactions() {
-      setLoading(true)
-      setErrorText('')
+    async function loadData() {
+      setIsLoading(true)
+      setErrorMsg('')
 
       try {
         const res = await fetch(API_URL)
-        if (!res.ok) {
-          throw new Error('Failed to load data from API')
-        }
-
+        if (!res.ok) throw new Error('API error')
         const data = await res.json()
-        setTransactions(data)
+        setListData(data)
       } catch (error) {
-        const localData = localStorage.getItem('transactions_backup')
-
-        if (localData) {
-          setTransactions(JSON.parse(localData))
-          setErrorText('API not reachable, loaded local backup data.')
+        const localBackup = localStorage.getItem('transactions_backup')
+        if (localBackup) {
+          setListData(JSON.parse(localBackup))
+          setErrorMsg('Backend not reachable. Showing LocalStorage backup.')
         } else {
-          setTransactions(startTransactions)
-          setErrorText('API not reachable, loaded default mock data.')
+          setListData(startTransactions)
+          setErrorMsg('Backend not reachable. Showing backup data from file.')
         }
       } finally {
-        setLoading(false)
+        setIsLoading(false)
       }
     }
 
-    loadTransactions()
+    loadData()
   }, [])
 
   useEffect(() => {
-    localStorage.setItem('transactions_backup', JSON.stringify(transactions))
-  }, [transactions])
+    localStorage.setItem('transactions_backup', JSON.stringify(listData))
+  }, [listData])
 
   useEffect(() => {
     localStorage.setItem('role', role)
   }, [role])
 
-  const totalIncome = useMemo(() => {
-    return transactions
-      .filter((item) => item.type === 'Income')
-      .reduce((sum, item) => sum + Number(item.amount), 0)
-  }, [transactions])
+  const totals = useMemo(() => {
+    let income = 0
+    let expense = 0
 
-  const totalExpense = useMemo(() => {
-    return transactions
-      .filter((item) => item.type === 'Expense')
-      .reduce((sum, item) => sum + Number(item.amount), 0)
-  }, [transactions])
-
-  const totalBalance = totalIncome - totalExpense
-
-  const filteredTransactions = useMemo(() => {
-    let list = [...transactions]
-
-    list = list.filter((item) => {
-      const typeMatch = filterType === 'All' ? true : item.type === filterType
-      const searchLower = searchText.toLowerCase()
-      const searchMatch =
-        item.category.toLowerCase().includes(searchLower) ||
-        String(item.amount).includes(searchLower) ||
-        item.date.includes(searchLower)
-
-      return typeMatch && searchMatch
+    listData.forEach((item) => {
+      if (item.type === 'Income') income += Number(item.amount)
+      if (item.type === 'Expense') expense += Number(item.amount)
     })
 
-    if (sortBy === 'newest') {
-      list.sort((a, b) => new Date(b.date) - new Date(a.date))
+    return {
+      income,
+      expense,
+      balance: income - expense,
     }
-    if (sortBy === 'oldest') {
-      list.sort((a, b) => new Date(a.date) - new Date(b.date))
-    }
-    if (sortBy === 'amountHigh') {
-      list.sort((a, b) => Number(b.amount) - Number(a.amount))
-    }
-    if (sortBy === 'amountLow') {
-      list.sort((a, b) => Number(a.amount) - Number(b.amount))
-    }
+  }, [listData])
 
-    return list
-  }, [transactions, filterType, searchText, sortBy])
+  const viewData = useMemo(() => {
+    let next = [...listData]
+
+    next = next.filter((item) => {
+      const search = searchText.toLowerCase()
+      const typeOk = filterType === 'All' ? true : item.type === filterType
+      const searchOk =
+        item.category.toLowerCase().includes(search) ||
+        item.date.includes(search) ||
+        String(item.amount).includes(search)
+
+      return typeOk && searchOk
+    })
+
+    if (sortBy === 'newest') next.sort((a, b) => new Date(b.date) - new Date(a.date))
+    if (sortBy === 'oldest') next.sort((a, b) => new Date(a.date) - new Date(b.date))
+    if (sortBy === 'amountHigh') next.sort((a, b) => b.amount - a.amount)
+    if (sortBy === 'amountLow') next.sort((a, b) => a.amount - b.amount)
+
+    return next
+  }, [listData, searchText, filterType, sortBy])
 
   const lineData = useMemo(() => {
-    return [...transactions]
-      .sort((a, b) => new Date(a.date) - new Date(b.date))
-      .map((item) => ({ date: item.date.slice(5), amount: Number(item.amount) }))
-  }, [transactions])
+    const byDate = [...listData].sort((a, b) => new Date(a.date) - new Date(b.date))
+    let runningBalance = 0
+
+    return byDate.map((item) => {
+      if (item.type === 'Income') runningBalance += Number(item.amount)
+      else runningBalance -= Number(item.amount)
+
+      return {
+        date: item.date.slice(5),
+        balance: runningBalance,
+      }
+    })
+  }, [listData])
 
   const pieData = useMemo(() => {
     const mapObj = {}
 
-    transactions
+    listData
       .filter((item) => item.type === 'Expense')
       .forEach((item) => {
-        if (!mapObj[item.category]) {
-          mapObj[item.category] = 0
-        }
+        if (!mapObj[item.category]) mapObj[item.category] = 0
         mapObj[item.category] += Number(item.amount)
       })
 
     return Object.keys(mapObj).map((key) => ({ name: key, value: mapObj[key] }))
-  }, [transactions])
+  }, [listData])
 
-  const highestExpenseCategory = useMemo(() => {
-    if (pieData.length === 0) return 'No expense yet'
+  const highestExpenseText = useMemo(() => {
+    if (!pieData.length) return 'No expense data'
 
-    let maxObj = pieData[0]
-    pieData.forEach((item) => {
-      if (item.value > maxObj.value) maxObj = item
-    })
-
-    return `${maxObj.name} ($${maxObj.value})`
+    const top = pieData.reduce((max, item) => (item.value > max.value ? item : max), pieData[0])
+    return `${top.name} ($${top.value})`
   }, [pieData])
 
-  const monthlyCompareText = useMemo(() => {
+  const monthlyCompare = useMemo(() => {
     const now = new Date()
-    const thisMonth = now.getMonth() + 1
-    const thisYear = now.getFullYear()
+    const m = now.getMonth()
+    const y = now.getFullYear()
 
-    const prevDate = new Date(thisYear, thisMonth - 2, 1)
-    const prevMonth = prevDate.getMonth() + 1
-    const prevYear = prevDate.getFullYear()
+    let monthIncome = 0
+    let monthExpense = 0
 
-    let thisMonthExpense = 0
-    let prevMonthExpense = 0
-
-    transactions.forEach((item) => {
-      if (item.type !== 'Expense') return
-
+    listData.forEach((item) => {
       const d = new Date(item.date)
-      const month = d.getMonth() + 1
-      const year = d.getFullYear()
-
-      if (month === thisMonth && year === thisYear) {
-        thisMonthExpense += Number(item.amount)
-      }
-      if (month === prevMonth && year === prevYear) {
-        prevMonthExpense += Number(item.amount)
+      if (d.getMonth() === m && d.getFullYear() === y) {
+        if (item.type === 'Income') monthIncome += Number(item.amount)
+        if (item.type === 'Expense') monthExpense += Number(item.amount)
       }
     })
 
-    return `This month: $${thisMonthExpense} | Last month: $${prevMonthExpense}`
-  }, [transactions])
+    return { monthIncome, monthExpense }
+  }, [listData])
 
-  async function handleSaveTransaction(e) {
+  async function submitForm(e) {
     e.preventDefault()
 
     if (!formDate || !formAmount || !formCategory) {
@@ -195,280 +177,305 @@ function App() {
     }
 
     try {
-      if (editingId) {
-        const res = await fetch(`${API_URL}/${editingId}`, {
+      if (editId) {
+        const res = await fetch(`${API_URL}/${editId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
-        if (!res.ok) throw new Error('Update failed')
+        if (!res.ok) throw new Error('Cannot update')
         const updated = await res.json()
-        setTransactions((prev) => prev.map((item) => (item.id === editingId ? updated : item)))
+        setListData((prev) => prev.map((item) => (item.id === editId ? updated : item)))
       } else {
         const res = await fetch(API_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
-        if (!res.ok) throw new Error('Create failed')
+        if (!res.ok) throw new Error('Cannot add')
         const created = await res.json()
-        setTransactions((prev) => [created, ...prev])
+        setListData((prev) => [created, ...prev])
       }
 
-      setEditingId(null)
+      setEditId(null)
       setFormDate('')
       setFormAmount('')
-      setFormCategory('')
+      setFormCategory('Food')
       setFormType('Expense')
     } catch (error) {
-      alert('Could not save transaction. Is backend running?')
+      alert('Action failed. Please check backend server.')
     }
   }
 
   function startEdit(item) {
-    setEditingId(item.id)
+    setEditId(item.id)
     setFormDate(item.date)
     setFormAmount(String(item.amount))
     setFormCategory(item.category)
     setFormType(item.type)
   }
 
-  async function deleteTransaction(id) {
-    const ok = window.confirm('Delete this transaction?')
+  async function removeItem(id) {
+    const ok = window.confirm('Delete this item?')
     if (!ok) return
 
     try {
       const res = await fetch(`${API_URL}/${id}`, { method: 'DELETE' })
-      if (!res.ok) throw new Error('Delete failed')
-      setTransactions((prev) => prev.filter((item) => item.id !== id))
+      if (!res.ok) throw new Error('Cannot delete')
+      setListData((prev) => prev.filter((item) => item.id !== id))
     } catch (error) {
-      alert('Could not delete. Is backend running?')
+      alert('Delete failed. Please check backend server.')
     }
   }
 
   return (
-    <div className="min-h-screen p-4 md:p-8">
-      <div className="max-w-6xl mx-auto">
-        <h1 className="text-2xl font-bold mb-4">My Finance Dashboard</h1>
-
-        <div className="bg-white border border-gray-200 rounded p-3 mb-4">
-          <label className="text-sm mr-2">Switch Role:</label>
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="border rounded px-2 py-1 text-sm"
-          >
-            <option>Admin</option>
-            <option>Viewer</option>
-          </select>
-          <span className="ml-3 text-xs text-gray-500">Current: {role}</span>
-        </div>
-
-        {errorText && <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 p-2 mb-3 rounded">{errorText}</p>}
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-white p-4 rounded border hover:shadow-sm transition">
-            <p className="text-gray-500 text-sm">Total Balance</p>
-            <p className="text-xl font-semibold mt-1">${totalBalance}</p>
+    <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-200 text-gray-800">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-xl md:text-2xl font-bold text-indigo-700">Finance Dashboard</h1>
+            <p className="text-xs text-gray-500">Simple tracker project</p>
           </div>
-          <div className="bg-white p-4 rounded border hover:shadow-sm transition">
-            <p className="text-gray-500 text-sm">Income</p>
-            <p className="text-xl font-semibold mt-1 text-green-600">${totalIncome}</p>
-          </div>
-          <div className="bg-white p-4 rounded border hover:shadow-sm transition">
-            <p className="text-gray-500 text-sm">Expenses</p>
-            <p className="text-xl font-semibold mt-1 text-red-500">${totalExpense}</p>
+
+          <div className="flex items-center gap-2">
+            <label className="text-sm">Role:</label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white"
+            >
+              <option>Admin</option>
+              <option>Viewer</option>
+            </select>
           </div>
         </div>
+      </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-          <div className="bg-white p-4 rounded border">
-            <h2 className="font-semibold mb-3">Amount Trend (Simple Line Chart)</h2>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={lineData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="amount" stroke="#4F46E5" strokeWidth={2} />
-                </LineChart>
-              </ResponsiveContainer>
+      <div className="max-w-7xl mx-auto px-4 py-5 grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4">
+        <aside className="bg-white border border-gray-200 rounded-xl p-4 h-fit shadow-sm">
+          <p className="text-xs uppercase text-gray-500 mb-2">Navigation</p>
+          <ul className="space-y-2 text-sm">
+            <li className="bg-indigo-50 text-indigo-700 px-3 py-2 rounded-md">Overview</li>
+            <li className="hover:bg-gray-100 px-3 py-2 rounded-md transition">Transactions</li>
+            <li className="hover:bg-gray-100 px-3 py-2 rounded-md transition">Insights</li>
+          </ul>
+          <div className="mt-5 p-3 rounded-md bg-gray-50 border text-xs text-gray-600">
+            Current mode: <b>{role}</b>
+          </div>
+        </aside>
+
+        <main>
+          {errorMsg && (
+            <div className="mb-3 bg-amber-50 border border-amber-300 text-amber-700 text-sm rounded-lg p-2">{errorMsg}</div>
+          )}
+
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm hover:-translate-y-0.5 transition">
+              <p className="text-sm text-gray-500">Total Balance</p>
+              <p className="text-2xl font-semibold text-indigo-700 mt-1">${totals.balance}</p>
             </div>
-          </div>
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm hover:-translate-y-0.5 transition">
+              <p className="text-sm text-gray-500">Income</p>
+              <p className="text-2xl font-semibold text-green-600 mt-1">${totals.income}</p>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm hover:-translate-y-0.5 transition">
+              <p className="text-sm text-gray-500">Expense</p>
+              <p className="text-2xl font-semibold text-red-500 mt-1">${totals.expense}</p>
+            </div>
+          </section>
 
-          <div className="bg-white p-4 rounded border">
-            <h2 className="font-semibold mb-3">Expense Categories (Pie)</h2>
-            <div className="h-64">
-              {pieData.length === 0 ? (
-                <p className="text-gray-500 mt-10">No expense data to show.</p>
-              ) : (
+          <section className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-5">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+              <h2 className="font-semibold mb-3">Balance Trend</h2>
+              <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={85}>
-                      {pieData.map((entry, index) => (
-                        <Cell key={entry.name} fill={pieColors[index % pieColors.length]} />
-                      ))}
-                    </Pie>
+                  <LineChart data={lineData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis />
                     <Tooltip />
-                    <Legend />
-                  </PieChart>
+                    <Line type="monotone" dataKey="balance" stroke="#4F46E5" strokeWidth={2} />
+                  </LineChart>
                 </ResponsiveContainer>
-              )}
+              </div>
             </div>
-          </div>
-        </div>
 
-        <div className="bg-white p-4 rounded border mb-6">
-          <h2 className="font-semibold mb-3">Insights</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="bg-gray-50 p-3 rounded border">
-              <p className="text-sm text-gray-500">Highest Expense Category</p>
-              <p className="font-medium mt-1">{highestExpenseCategory}</p>
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+              <h2 className="font-semibold mb-3">Expense by Category</h2>
+              <div className="h-64">
+                {!pieData.length ? (
+                  <p className="text-sm text-gray-500 mt-10">No transactions available</p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90}>
+                        {pieData.map((entry, i) => (
+                          <Cell key={entry.name} fill={pieColors[i % pieColors.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
             </div>
-            <div className="bg-gray-50 p-3 rounded border">
-              <p className="text-sm text-gray-500">Monthly Comparison</p>
-              <p className="font-medium mt-1">{monthlyCompareText}</p>
-            </div>
-            <div className="bg-gray-50 p-3 rounded border">
-              <p className="text-sm text-gray-500">Total Savings</p>
-              <p className="font-medium mt-1">${totalBalance}</p>
-            </div>
-          </div>
-        </div>
+          </section>
 
-        {role === 'Admin' && (
-          <div className="bg-white p-4 rounded border mb-6">
-            <h2 className="font-semibold mb-3">{editingId ? 'Edit Transaction' : 'Add Transaction'} (Admin Only)</h2>
-            <form onSubmit={handleSaveTransaction} className="grid grid-cols-1 md:grid-cols-5 gap-2">
-              <input
-                type="date"
-                value={formDate}
-                onChange={(e) => setFormDate(e.target.value)}
-                className="border rounded px-2 py-2 text-sm"
-              />
-              <input
-                type="number"
-                placeholder="Amount"
-                value={formAmount}
-                onChange={(e) => setFormAmount(e.target.value)}
-                className="border rounded px-2 py-2 text-sm"
-              />
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+              <p className="text-sm text-gray-500">Highest spending category</p>
+              <p className="font-semibold mt-1">{highestExpenseText}</p>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+              <p className="text-sm text-gray-500">Monthly income vs expense</p>
+              <p className="font-semibold mt-1 text-green-600">Income: ${monthlyCompare.monthIncome}</p>
+              <p className="font-semibold text-red-500">Expense: ${monthlyCompare.monthExpense}</p>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+              <p className="text-sm text-gray-500">Total savings</p>
+              <p className="font-semibold mt-1 text-indigo-700">${totals.balance}</p>
+            </div>
+          </section>
+
+          {role === 'Admin' && (
+            <section className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm mb-5">
+              <h2 className="font-semibold mb-3">{editId ? 'Edit Transaction' : 'Add Transaction'}</h2>
+              <form onSubmit={submitForm} className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                <input
+                  type="date"
+                  value={formDate}
+                  onChange={(e) => setFormDate(e.target.value)}
+                  className="border border-gray-300 rounded-md px-3 py-2 text-sm"
+                />
+                <input
+                  type="number"
+                  placeholder="Amount"
+                  value={formAmount}
+                  onChange={(e) => setFormAmount(e.target.value)}
+                  className="border border-gray-300 rounded-md px-3 py-2 text-sm"
+                />
+                <select
+                  value={formCategory}
+                  onChange={(e) => setFormCategory(e.target.value)}
+                  className="border border-gray-300 rounded-md px-3 py-2 text-sm"
+                >
+                  <option>Food</option>
+                  <option>Transport</option>
+                  <option>Shopping</option>
+                  <option>Salary</option>
+                  <option>Freelance</option>
+                  <option>Bills</option>
+                  <option>Entertainment</option>
+                </select>
+                <select
+                  value={formType}
+                  onChange={(e) => setFormType(e.target.value)}
+                  className="border border-gray-300 rounded-md px-3 py-2 text-sm"
+                >
+                  <option>Income</option>
+                  <option>Expense</option>
+                </select>
+                <button
+                  type="submit"
+                  className="bg-indigo-600 text-white rounded-md px-3 py-2 text-sm hover:bg-indigo-700 transition"
+                >
+                  {editId ? 'Update' : 'Add'}
+                </button>
+              </form>
+            </section>
+          )}
+
+          <section className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <h2 className="font-semibold mb-3">Transactions</h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
               <input
                 type="text"
-                placeholder="Category"
-                value={formCategory}
-                onChange={(e) => setFormCategory(e.target.value)}
-                className="border rounded px-2 py-2 text-sm"
+                placeholder="Search by date/category/amount"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                className="border border-gray-300 rounded-md px-3 py-2 text-sm"
               />
               <select
-                value={formType}
-                onChange={(e) => setFormType(e.target.value)}
-                className="border rounded px-2 py-2 text-sm"
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+                className="border border-gray-300 rounded-md px-3 py-2 text-sm"
               >
+                <option>All</option>
                 <option>Income</option>
                 <option>Expense</option>
               </select>
-              <button
-                type="submit"
-                className="bg-indigo-500 hover:bg-indigo-600 text-white rounded px-3 py-2 text-sm transition"
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="border border-gray-300 rounded-md px-3 py-2 text-sm"
               >
-                {editingId ? 'Update' : 'Add'}
-              </button>
-            </form>
-          </div>
-        )}
-
-        <div className="bg-white p-4 rounded border">
-          <h2 className="font-semibold mb-3">Transactions</h2>
-
-          <div className="flex flex-col md:flex-row gap-2 md:items-center mb-3">
-            <input
-              type="text"
-              placeholder="Search by date/category/amount"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              className="border rounded px-3 py-2 text-sm w-full md:w-72"
-            />
-
-            <select
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
-              className="border rounded px-3 py-2 text-sm w-full md:w-40"
-            >
-              <option>All</option>
-              <option>Income</option>
-              <option>Expense</option>
-            </select>
-
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="border rounded px-3 py-2 text-sm w-full md:w-52"
-            >
-              <option value="newest">Sort: Newest Date</option>
-              <option value="oldest">Sort: Oldest Date</option>
-              <option value="amountHigh">Sort: Amount High to Low</option>
-              <option value="amountLow">Sort: Amount Low to High</option>
-            </select>
-          </div>
-
-          {loading ? (
-            <p className="text-gray-500 text-sm">Loading transactions...</p>
-          ) : filteredTransactions.length === 0 ? (
-            <p className="text-gray-500 text-sm">No transactions found.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-gray-100 text-left text-sm">
-                    <th className="p-2 border">Date</th>
-                    <th className="p-2 border">Amount</th>
-                    <th className="p-2 border">Category</th>
-                    <th className="p-2 border">Type</th>
-                    {role === 'Admin' && <th className="p-2 border">Action</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredTransactions.map((item) => (
-                    <tr key={item.id} className="hover:bg-gray-50 text-sm transition">
-                      <td className="p-2 border">{item.date}</td>
-                      <td className="p-2 border">${item.amount}</td>
-                      <td className="p-2 border">{item.category}</td>
-                      <td className="p-2 border">
-                        <span
-                          className={`px-2 py-1 rounded text-xs ${
-                            item.type === 'Income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                          }`}
-                        >
-                          {item.type}
-                        </span>
-                      </td>
-                      {role === 'Admin' && (
-                        <td className="p-2 border">
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => startEdit(item)}
-                              className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-700 hover:bg-blue-200"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => deleteTransaction(item.id)}
-                              className="px-2 py-1 text-xs rounded bg-red-100 text-red-700 hover:bg-red-200"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                <option value="newest">Sort: Newest Date</option>
+                <option value="oldest">Sort: Oldest Date</option>
+                <option value="amountHigh">Sort: Amount High to Low</option>
+                <option value="amountLow">Sort: Amount Low to High</option>
+              </select>
+              <div className="text-xs text-gray-500 flex items-center">Rows: {viewData.length}</div>
             </div>
-          )}
-        </div>
+
+            {isLoading ? (
+              <p className="text-sm text-gray-500">Loading transactions...</p>
+            ) : viewData.length === 0 ? (
+              <p className="text-sm text-gray-500">No transactions available</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-left">
+                      <th className="border p-2">Date</th>
+                      <th className="border p-2">Amount</th>
+                      <th className="border p-2">Category</th>
+                      <th className="border p-2">Type</th>
+                      {role === 'Admin' && <th className="border p-2">Action</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {viewData.map((item) => (
+                      <tr key={item.id} className="hover:bg-indigo-50 transition">
+                        <td className="border p-2">{item.date}</td>
+                        <td className="border p-2">${item.amount}</td>
+                        <td className="border p-2">{item.category}</td>
+                        <td className="border p-2">
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs ${
+                              item.type === 'Income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                            }`}
+                          >
+                            {item.type}
+                          </span>
+                        </td>
+                        {role === 'Admin' && (
+                          <td className="border p-2">
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => startEdit(item)}
+                                className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs hover:bg-blue-200 transition"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => removeItem(item.id)}
+                                className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs hover:bg-red-200 transition"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </main>
       </div>
     </div>
   )
